@@ -9,6 +9,29 @@ MODELS = [
 ]
 
 
+def is_conversational(query: str) -> bool:
+    """
+    Returns True if the query is a simple greeting or a question about the bot's own identity.
+    """
+    q = query.strip("?!. ").lower()
+    
+    # Greetings
+    if q in {
+        "hi", "hello", "hey", "greetings", "good morning", "good afternoon",
+        "good evening", "howdy", "sup", "yo", "hola", "namaste"
+    }:
+        return True
+        
+    # Identity / bot-info questions
+    if q in {
+        "tell me about yourself", "who are you", "what is your name", 
+        "what are you", "describe yourself", "introduce yourself", "tell me abt yourself"
+    }:
+        return True
+        
+    return False
+
+
 def build_prompt(query, context):
     """
     Build the prompt sent to the LLM.
@@ -20,7 +43,9 @@ You are a helpful AI assistant.
 
 Answer the user's question ONLY using the provided context.
 
-If the answer is not available in the context, reply:
+If the user's question is a simple greeting or pleasantry (like "hi", "hello", etc.), greet them back politely and ask how you can help, instead of saying you couldn't find it.
+
+If the answer is not available in the context and it is a factual question, reply:
 "I couldn't find that information in the knowledge base."
 
 Context:
@@ -52,8 +77,12 @@ def ask_llm(query):
     Falls back to the next model if one fails.
     """
 
-    # Retrieve relevant documents from vector DB
-    context = retrieve(query)
+    # If query is conversational (greeting or identity question), bypass retrieval
+    if is_conversational(query):
+        context = ""
+    else:
+        # Retrieve relevant documents from vector DB
+        context = retrieve(query)
 
     # Build prompt
     prompt = build_prompt(query, context)

@@ -24,8 +24,8 @@ def retrieve(query, top_k=3):
 
     for hit in results[0]:
 
-        # Skip weak matches
-        if hit["distance"] > 0.6:
+        # Skip weak matches (cosine similarity < 0.5)
+        if hit["distance"] < 0.5:
             continue
 
         entity = hit["entity"]

@@ -16,6 +16,19 @@ def route_query(query: str):
     elif "weather" in query_lower:
         return get_weather(query)
 
+    # Resume / RAG query has priority if it contains resume-related keywords
+    elif any(word in query_lower for word in [
+        "resume",
+        "cv",
+        "candidate",
+        "experience",
+        "skills",
+        "education",
+        "projects",
+        "profile"
+    ]):
+        return ask_llm(query)
+
     # Web Search
     elif any(word in query_lower for word in [
         "search",
