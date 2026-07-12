@@ -1,6 +1,5 @@
 from ollama import chat
 
-
 def ask_llama(prompt: str) -> str:
     """
     Sends the prompt to the local Llama model
