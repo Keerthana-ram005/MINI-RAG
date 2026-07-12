@@ -1,18 +1,10 @@
+import streamlit as st
 from router import route_query
 
-def main():
-    print("=== Mini Agentic RAG ===")
+st.title("Mini Agentic RAG")
 
-    while True:
-        query = input("\nYou: ")
+query = st.chat_input("Ask anything")
 
-        if query.lower() in ["exit", "quit"]:
-            break
-
-        answer = route_query(query)
-
-        print("\nAssistant:", answer)
-
-
-if __name__ == "__main__":
-    main()
+if query:
+    response = route_query(query)
+    st.write(response)
