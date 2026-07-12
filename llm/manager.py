@@ -110,3 +110,54 @@ def ask_llm(query):
         "Sorry, I couldn't generate a response.\n\n"
         + "\n".join(errors)
     )
+
+
+def ask_llm_with_trace(query):
+    """
+    Retrieve context, query available LLMs in order, and track metadata traces.
+    """
+    sub_trace = {
+        "retrieval": "N/A",
+        "model_used": "None",
+        "fallback_triggered": "No"
+    }
+
+    # If query is conversational (greeting or identity question), bypass retrieval
+    if is_conversational(query):
+        context = ""
+        sub_trace["retrieval"] = "N/A"
+    else:
+        # Retrieve relevant documents from vector DB
+        context = retrieve(query)
+        sub_trace["retrieval"] = "Hit" if context.strip() else "Miss"
+
+    # Build prompt
+    prompt = build_prompt(query, context)
+
+    errors = []
+
+    for i, (name, model) in enumerate(MODELS):
+        try:
+            print(f"Trying {name}...")
+
+            response = model(prompt)
+
+            if response and response.strip():
+                print(f"{name} succeeded.")
+                sub_trace["model_used"] = name
+                sub_trace["fallback_triggered"] = "Yes" if i > 0 else "No"
+                return response.strip(), sub_trace
+
+            raise ValueError("Received empty response.")
+
+        except Exception as e:
+            error = f"{name} failed: {e}"
+            print(error)
+            errors.append(error)
+
+    sub_trace["fallback_triggered"] = "Yes" if len(MODELS) > 1 else "No"
+    return (
+        "Sorry, I couldn't generate a response.\n\n"
+        + "\n".join(errors),
+        sub_trace
+    )
