@@ -1,17 +1,11 @@
 from google import genai
-from config import GEMINI_API_KEY, GEMINI_MODEL
+from config import GEMINI_API_KEY
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-
-def generate_response(prompt):
-    """
-    Sends a prompt to Gemini and returns the response.
-    """
-
+def ask_gemini(prompt):
     response = client.models.generate_content(
-        GEMINI_MODEL,
+        model="gemini-3.5-flash",
         contents=prompt
     )
-
     return response.text
