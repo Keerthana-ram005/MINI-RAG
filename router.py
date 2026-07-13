@@ -4,45 +4,40 @@ from tools.search import web_search
 
 from llm.manager import ask_llm, ask_llm_with_trace
 import time
+import re
+
+
+def is_math_query(query: str) -> bool:
+    """
+    Returns True if the query is a mathematical question or calculation expression.
+    """
+    query_lower = query.lower().strip()
+
+    # If it starts with 'calculate'
+    if query_lower.startswith("calculate"):
+        return True
+
+    # If it is a pure math expression
+    clean_q = re.sub(r"\s+", "", query)
+    if re.match(r"^[0-9+\-*/().]+$", clean_q) and any(op in clean_q for op in ["+", "-", "*", "/"]):
+        # Exclude dates (e.g. YYYY-MM-DD or MM-DD-YYYY)
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", clean_q) or re.match(r"^\d{2}-\d{2}-\d{4}$", clean_q):
+            return False
+        return True
+
+    # If it asks 'what is <math expression>'
+    if query_lower.startswith("what is ") or query_lower.startswith("what's "):
+        expr = query_lower.replace("what is", "").replace("what's", "").strip("? ")
+        clean_expr = re.sub(r"\s+", "", expr)
+        if re.match(r"^[0-9+\-*/().]+$", clean_expr) and any(op in clean_expr for op in ["+", "-", "*", "/"]):
+            return True
+
+    return False
 
 
 def route_query(query: str):
-    query_lower = query.lower()
-
-    # Calculator
-    if any(op in query_lower for op in ["+", "-", "*", "/", "calculate"]):
-        return calculator(query)
-
-    # Weather
-    elif "weather" in query_lower:
-        return get_weather(query)
-
-    # Resume / RAG query has priority if it contains resume-related keywords
-    elif any(word in query_lower for word in [
-        "resume",
-        "cv",
-        "candidate",
-        "experience",
-        "skills",
-        "education",
-        "projects",
-        "profile"
-    ]):
-        return ask_llm(query)
-
-    # Web Search
-    elif any(word in query_lower for word in [
-        "search",
-        "find",
-        "latest",
-        "news",
-        "google"
-    ]):
-        return web_search(query)
-
-    # Everything else
-    else:
-        return ask_llm(query)
+    response, trace = route_query_with_trace(query)
+    return response
 
 
 def route_query_with_trace(query: str):
@@ -58,52 +53,52 @@ def route_query_with_trace(query: str):
     }
 
     try:
-        # Calculator
-        if any(op in query_lower for op in ["+", "-", "*", "/", "calculate"]):
+        from llm.manager import is_conversational
+        from rag.retrieve import retrieve
+
+        # 1. Check if conversational query first
+        if is_conversational(query):
+            trace["retrieval"] = "N/A"
+            trace["tool_used"] = "Conversational"
+            response, sub_trace = ask_llm_with_trace(query, context="")
+            trace.update(sub_trace)
+
+        # 2. Check if Calculator query
+        elif is_math_query(query):
+            trace["retrieval"] = "N/A"
             trace["tool_used"] = "Calculator"
             response = calculator(query)
 
-        # Weather
+        # 3. Check if Weather query
         elif "weather" in query_lower:
+            trace["retrieval"] = "N/A"
             trace["tool_used"] = "Weather"
             response = get_weather(query)
 
-        # Resume / RAG query has priority if it contains resume-related keywords
-        elif any(word in query_lower for word in [
-            "resume",
-            "cv",
-            "candidate",
-            "experience",
-            "skills",
-            "education",
-            "projects",
-            "profile"
-        ]):
-            trace["tool_used"] = "RAG"
-            response, sub_trace = ask_llm_with_trace(query)
-            trace.update(sub_trace)
-
-        # Web Search
-        elif any(word in query_lower for word in [
-            "search",
-            "find",
-            "latest",
-            "news",
-            "google"
-        ]):
-            trace["tool_used"] = "Web Search"
-            response = web_search(query)
-
-        # Everything else
+        # 4. Otherwise check the Vector DB for relevant context
         else:
-            from llm.manager import is_conversational
-            if is_conversational(query):
-                trace["tool_used"] = "Conversational"
+            db_context = retrieve(query)
+            if db_context.strip():
+                # RAG path - relevant context is found in knowledge base
+                trace["retrieval"] = "Hit"
+                trace["tool_used"] = "RAG"
+                response, sub_trace = ask_llm_with_trace(query, context=db_context)
+                trace.update(sub_trace)
             else:
-                trace["tool_used"] = "Direct LLM"
-
-            response, sub_trace = ask_llm_with_trace(query)
-            trace.update(sub_trace)
+                # Miss - no relevant context, fallback to Web Search
+                trace["retrieval"] = "Miss"
+                trace["tool_used"] = "Web Search"
+                web_results = web_search(query)
+                
+                if web_results:
+                    context_from_web = "\n\n".join([
+                        f"Title: {r['title']}\nSource: {r['url']}\nContent: {r['body']}"
+                        for r in web_results
+                    ])
+                    response, sub_trace = ask_llm_with_trace(query, context=context_from_web, from_web=True)
+                    trace.update(sub_trace)
+                else:
+                    response = "I couldn't find any relevant information in the knowledge base or via web search."
 
     except Exception as e:
         response = f"An error occurred: {e}"

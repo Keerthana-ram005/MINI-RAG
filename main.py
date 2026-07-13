@@ -1,9 +1,7 @@
 import streamlit as st
+import requests
 import sys
 import os
-
-from router import route_query_with_trace
-from rag.ingest import ingest_pdf_file, ingest_url
 
 # Set page config
 st.set_page_config(
@@ -99,6 +97,8 @@ st.markdown("<p class='subtitle-desc'>Ask anything, scrape websites, or upload d
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
+API_BASE_URL = "http://127.0.0.1:8000"
+
 # Sidebar for document upload / URL ingestion
 with st.sidebar:
     st.markdown("### 📤 Ingest New Knowledge")
@@ -110,11 +110,17 @@ with st.sidebar:
             if st.button("Process & Ingest PDF", use_container_width=True):
                 with st.spinner("Parsing and embedding PDF..."):
                     try:
-                        # Ingest the file-like object directly
-                        num_chunks = ingest_pdf_file(uploaded_file, uploaded_file.name)
-                        st.success(f"Successfully ingested {num_chunks} chunks from '{uploaded_file.name}'!")
+                        # Call FastAPI POST /load
+                        files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")}
+                        res = requests.post(f"{API_BASE_URL}/load", files=files)
+                        
+                        if res.status_code == 200:
+                            data = res.json()
+                            st.success(f"Successfully ingested {data['chunks_ingested']} chunks from '{uploaded_file.name}'!")
+                        else:
+                            st.error(f"Error: {res.json().get('detail', 'Unknown error')}")
                     except Exception as e:
-                        st.error(f"Error ingesting PDF: {e}")
+                        st.error(f"Failed to communicate with backend: {e}")
                         
     else:
         url_input = st.text_input("Enter Web URL:", placeholder="https://example.com/about")
@@ -122,13 +128,17 @@ with st.sidebar:
             if st.button("Scrape & Ingest URL", use_container_width=True):
                 with st.spinner("Scraping web content and building vectors..."):
                     try:
-                        num_chunks = ingest_url(url_input)
-                        if num_chunks > 0:
-                            st.success(f"Successfully ingested web content from URL!")
+                        # Call FastAPI POST /load
+                        data = {"url": url_input}
+                        res = requests.post(f"{API_BASE_URL}/load", data=data)
+                        
+                        if res.status_code == 200:
+                            res_data = res.json()
+                            st.success(f"Successfully ingested {res_data['chunks_ingested']} chunks from URL!")
                         else:
-                            st.error("Failed to scrape or extract text from URL.")
+                            st.error(f"Error: {res.json().get('detail', 'Unknown error')}")
                     except Exception as e:
-                        st.error(f"Error ingesting URL: {e}")
+                        st.error(f"Failed to communicate with backend: {e}")
 
 # Display Chat History
 for chat in st.session_state.chat_history:
@@ -176,7 +186,31 @@ if query:
         
     # Process query
     with st.spinner("Thinking..."):
-        response, trace = route_query_with_trace(query)
+        try:
+            # Call FastAPI POST /query
+            res = requests.post(f"{API_BASE_URL}/query", json={"query": query})
+            if res.status_code == 200:
+                data = res.json()
+                response = data["response"]
+                trace = data["trace"]
+            else:
+                response = f"Backend error: {res.json().get('detail', 'Unknown error')}"
+                trace = {
+                    "retrieval": "N/A",
+                    "tool_used": "None",
+                    "model_used": "None",
+                    "fallback_triggered": "No",
+                    "response_time": 0.0
+                }
+        except Exception as e:
+            response = f"Failed to communicate with backend: {e}"
+            trace = {
+                "retrieval": "N/A",
+                "tool_used": "None",
+                "model_used": "None",
+                "fallback_triggered": "No",
+                "response_time": 0.0
+            }
         
     # Display response
     with st.chat_message("assistant"):

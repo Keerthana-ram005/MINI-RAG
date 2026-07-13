@@ -9,7 +9,7 @@ client.load_collection(COLLECTION_NAME)
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
-def retrieve(query, top_k=3):
+def retrieve(query, top_k=5):
 
     query_embedding = embedding_model.encode(query).tolist()
 
@@ -24,20 +24,20 @@ def retrieve(query, top_k=3):
 
     for hit in results[0]:
 
-        # Skip weak matches (cosine similarity < 0.5)
-        if hit["distance"] < 0.5:
+        # Skip weak matches (cosine similarity < 0.45)
+        if hit["distance"] < 0.45:
             continue
 
         entity = hit["entity"]
-
-        print("Score:", hit["distance"])
-        print("Source:", entity["source"])
+        print(f"Score: {hit['distance']}")
+        print(f"Source: {entity.get('source')} (Page: {entity.get('page_num')})")
+        print(f"Snippet: {repr(entity.get('text')[:200])}")
         print("-" * 50)
 
         context += (
-            f"Source: {entity['source']}\n"
-            f"Page: {entity['page_num']}\n"
-            f"{entity['text']}\n\n"
+            f"Source: {entity.get('source')}\n"
+            f"Page: {entity.get('page_num')}\n"
+            f"{entity.get('text')}\n\n"
         )
 
     return context

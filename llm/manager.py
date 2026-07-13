@@ -32,21 +32,24 @@ def is_conversational(query: str) -> bool:
     return False
 
 
-def build_prompt(query, context):
+def build_prompt(query, context, from_web=False):
     """
     Build the prompt sent to the LLM.
     """
 
     if context:
+        source_label = "web search results" if from_web else "provided context"
         return f"""
 You are a helpful AI assistant.
 
-Answer the user's question ONLY using the provided context.
+CRITICAL INSTRUCTIONS:
+1. Answer the user's question ONLY using the provided context from {source_label}.
+2. If the answer is available in the context, provide a detailed, comprehensive, and complete answer based on the context.
+3. If the answer is NOT available in the context, you must reply strictly and only with:
+"I couldn't find any information."
+Do not add any additional explanation, general knowledge, or commentary.
 
 If the user's question is a simple greeting or pleasantry (like "hi", "hello", etc.), greet them back politely and ask how you can help, instead of saying you couldn't find it.
-
-If the answer is not available in the context and it is a factual question, reply:
-"I couldn't find that information in the knowledge base."
 
 Context:
 {context}
@@ -63,6 +66,7 @@ You are a helpful AI assistant.
 No relevant knowledge base information was found.
 
 Answer the following question using your general knowledge.
+Provide a detailed, comprehensive, and complete answer.
 
 Question:
 {query}
@@ -106,13 +110,10 @@ def ask_llm(query):
             print(error)
             errors.append(error)
 
-    return (
-        "Sorry, I couldn't generate a response.\n\n"
-        + "\n".join(errors)
-    )
+    return "I couldn't find any information."
 
 
-def ask_llm_with_trace(query):
+def ask_llm_with_trace(query, context=None, from_web=False):
     """
     Retrieve context, query available LLMs in order, and track metadata traces.
     """
@@ -122,17 +123,21 @@ def ask_llm_with_trace(query):
         "fallback_triggered": "No"
     }
 
-    # If query is conversational (greeting or identity question), bypass retrieval
-    if is_conversational(query):
-        context = ""
-        sub_trace["retrieval"] = "N/A"
+    if context is None:
+        # If query is conversational (greeting or identity question), bypass retrieval
+        if is_conversational(query):
+            context = ""
+            sub_trace["retrieval"] = "N/A"
+        else:
+            # Retrieve relevant documents from vector DB
+            context = retrieve(query)
+            sub_trace["retrieval"] = "Hit" if context.strip() else "Miss"
     else:
-        # Retrieve relevant documents from vector DB
-        context = retrieve(query)
-        sub_trace["retrieval"] = "Hit" if context.strip() else "Miss"
+        # Context is pre-retrieved
+        sub_trace["retrieval"] = "Hit" if not from_web else "Miss"
 
     # Build prompt
-    prompt = build_prompt(query, context)
+    prompt = build_prompt(query, context, from_web=from_web)
 
     errors = []
 
@@ -157,7 +162,6 @@ def ask_llm_with_trace(query):
 
     sub_trace["fallback_triggered"] = "Yes" if len(MODELS) > 1 else "No"
     return (
-        "Sorry, I couldn't generate a response.\n\n"
-        + "\n".join(errors),
+        "I couldn't find any information.",
         sub_trace
     )
