@@ -113,7 +113,7 @@ def ask_llm(query):
     return "I couldn't find any information."
 
 
-def ask_llm_with_trace(query, context=None, from_web=False):
+def ask_llm_with_trace(query, context=None, from_web=False, custom_prompt=None):
     """
     Retrieve context, query available LLMs in order, and track metadata traces.
     """
@@ -137,7 +137,7 @@ def ask_llm_with_trace(query, context=None, from_web=False):
         sub_trace["retrieval"] = "Hit" if not from_web else "Miss"
 
     # Build prompt
-    prompt = build_prompt(query, context, from_web=from_web)
+    prompt = custom_prompt if custom_prompt else build_prompt(query, context, from_web=from_web)
 
     errors = []
 

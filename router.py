@@ -100,70 +100,87 @@ def route_query_with_trace(query: str):
     }
 
     try:
-        from llm.manager import ask_llm_with_trace
+        from llm.manager import ask_llm_with_trace, is_conversational
         from rag.retrieve import retrieve
 
-        # 1. Classify intent
-        category = classify_query(query)
-        print(f"DEBUG: Classified query category: '{category}'")
+        # 1. First, attempt to answer the query using the LLM's general knowledge.
+        # We instruct the model to return "I don't know." if the query requires real-time
+        # information (weather, math) or specific private/uploaded documents.
+        prompt = f"""
+You are a helpful AI assistant.
 
-        # 2. Conversational Route
-        if category == "conversational":
+Answer the following question using your general knowledge.
+Provide a detailed, comprehensive, and complete answer.
+
+CRITICAL RULE:
+If you do not know the answer, or if the question requires real-time information (such as weather, current sports scores, news, or calculations), or if it asks about specific private papers, resumes, or documents that you do not have in your training data, you MUST reply with exactly:
+"I don't know."
+Do not write any other explanation or commentary.
+
+Question:
+{query}
+
+Answer:
+"""
+        response, sub_trace = ask_llm_with_trace(query, context="", custom_prompt=prompt)
+        cleaned_res = response.strip().strip('"').strip("'").strip(".").strip().lower()
+
+        if cleaned_res != "i don't know" and "i don't know" not in cleaned_res and "couldn't find" not in cleaned_res:
+            # LLM answered successfully from general knowledge!
             trace["retrieval"] = "N/A"
-            trace["tool_used"] = "Conversational"
-            response, sub_trace = ask_llm_with_trace(query, context="")
+            trace["tool_used"] = "Direct LLM"
             trace.update(sub_trace)
+            trace["response_time"] = round(time.time() - start_time, 3)
+            return response, trace
 
-        # 3. Calculator Route
-        elif category == "calculator":
+        # 2. If the LLM has no answer, we trigger the fallback flow to RAG and tools.
+        trace["fallback_triggered"] = "Yes"
+
+        # A. Check if math query (Calculator tool)
+        if is_math_query(query):
             trace["retrieval"] = "N/A"
             trace["tool_used"] = "Calculator"
             response = calculator(query)
 
-        # 4. Weather Route
-        elif category == "weather":
+        # B. Check if weather query (Weather tool)
+        elif "weather" in query_lower or "temperature in" in query_lower:
             trace["retrieval"] = "N/A"
             trace["tool_used"] = "Weather"
             response = get_weather(query)
 
-        # 5. Search Route (Web Search)
-        elif category == "search":
-            trace["retrieval"] = "Miss"
-            trace["tool_used"] = "Web Search"
-            web_results = web_search(query)
-            
-            if web_results:
-                context_from_web = "\n\n".join([
-                    f"Title: {r['title']}\nSource: {r['url']}\nContent: {r['body']}"
-                    for r in web_results
-                ])
-                response, sub_trace = ask_llm_with_trace(query, context=context_from_web, from_web=True)
-                trace.update(sub_trace)
-            else:
-                response = "I couldn't find any information."
-
-        # 6. General LLM Route (No RAG / Vector DB)
-        elif category == "general":
-            trace["retrieval"] = "N/A"
-            trace["tool_used"] = "Direct LLM"
-            response, sub_trace = ask_llm_with_trace(query, context="")
-            trace.update(sub_trace)
-
-        # 7. RAG Route (Vector DB)
+        # C. RAG Route (Vector DB)
         else:
             db_context = retrieve(query)
             if db_context.strip():
-                # RAG path - relevant context is found in knowledge base
+                # RAG path - relevant context found in knowledge base
                 trace["retrieval"] = "Hit"
                 trace["tool_used"] = "RAG"
                 response, sub_trace = ask_llm_with_trace(query, context=db_context)
                 trace.update(sub_trace)
+
+                # Check if the LLM couldn't find the answer in the RAG context (false positive database match)
+                cleaned_res = response.strip().strip('"').strip("'").strip(".").strip().lower()
+                if "couldn't find" in cleaned_res or cleaned_res == "i don't know":
+                    print("DEBUG: RAG context did not contain the answer. Falling back to Web Search...")
+                    trace["retrieval"] = "Miss"
+                    trace["tool_used"] = "Web Search"
+                    web_results = web_search(query)
+
+                    if web_results:
+                        context_from_web = "\n\n".join([
+                            f"Title: {r['title']}\nSource: {r['url']}\nContent: {r['body']}"
+                            for r in web_results
+                        ])
+                        response, sub_trace = ask_llm_with_trace(query, context=context_from_web, from_web=True)
+                        trace.update(sub_trace)
+                    else:
+                        response = "I couldn't find any information."
             else:
-                # Miss - no relevant context, fallback to Web Search
+                # Miss - no context, fallback to Web Search
                 trace["retrieval"] = "Miss"
                 trace["tool_used"] = "Web Search"
                 web_results = web_search(query)
-                
+
                 if web_results:
                     context_from_web = "\n\n".join([
                         f"Title: {r['title']}\nSource: {r['url']}\nContent: {r['body']}"
