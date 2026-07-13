@@ -45,6 +45,7 @@ Classify the following user query into exactly one of these categories:
 - "calculator": mathematical expressions or calculations.
 - "weather": queries asking about current weather or forecast.
 - "rag": questions asking about the uploaded documents, PDFs, papers, resumes, portfolio, or candidate's projects/skills.
+- "search": questions about current events, news, recent developments, real-time facts, celebrities, pop culture, sports results, or any query requiring checking the live internet (e.g. "who won wimbledon", "current CEO of X").
 - "general": general knowledge, definitions, history, concepts, or general facts (e.g. "what is docker", "tell me about tata group").
 
 User Query: "{query}"
@@ -56,7 +57,7 @@ Category (reply with ONLY the category name):
         for name, model in MODELS:
             try:
                 category = model(prompt).strip().lower().replace('"', '').replace('.', '').strip()
-                if category in {"conversational", "calculator", "weather", "rag", "general"}:
+                if category in {"conversational", "calculator", "weather", "rag", "search", "general"}:
                     return category
             except Exception:
                 continue
@@ -72,6 +73,9 @@ Category (reply with ONLY the category name):
     from llm.manager import is_conversational
     if is_conversational(query):
         return "conversational"
+    # Detect general search keywords
+    if any(word in query_lower for word in ["news", "latest", "recent", "who won", "current", "today", "yesterday", "live"]):
+        return "search"
     if any(word in query_lower for word in ["resume", "cv", "candidate", "experience", "skills", "education", "projects", "profile", "paper", "author", "ijcrt"]):
         return "rag"
         
@@ -122,14 +126,30 @@ def route_query_with_trace(query: str):
             trace["tool_used"] = "Weather"
             response = get_weather(query)
 
-        # 5. General LLM Route (No RAG / Vector DB)
+        # 5. Search Route (Web Search)
+        elif category == "search":
+            trace["retrieval"] = "Miss"
+            trace["tool_used"] = "Web Search"
+            web_results = web_search(query)
+            
+            if web_results:
+                context_from_web = "\n\n".join([
+                    f"Title: {r['title']}\nSource: {r['url']}\nContent: {r['body']}"
+                    for r in web_results
+                ])
+                response, sub_trace = ask_llm_with_trace(query, context=context_from_web, from_web=True)
+                trace.update(sub_trace)
+            else:
+                response = "I couldn't find any information."
+
+        # 6. General LLM Route (No RAG / Vector DB)
         elif category == "general":
             trace["retrieval"] = "N/A"
             trace["tool_used"] = "Direct LLM"
             response, sub_trace = ask_llm_with_trace(query, context="")
             trace.update(sub_trace)
 
-        # 6. RAG Route (Vector DB)
+        # 7. RAG Route (Vector DB)
         else:
             db_context = retrieve(query)
             if db_context.strip():
