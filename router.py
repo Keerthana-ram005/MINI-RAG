@@ -35,6 +35,49 @@ def is_math_query(query: str) -> bool:
     return False
 
 
+def classify_query(query: str) -> str:
+    """
+    Classifies the user query category using the primary LLM with fallback.
+    """
+    prompt = f"""
+Classify the following user query into exactly one of these categories:
+- "conversational": simple greetings, pleasantries, or questions asking who you are.
+- "calculator": mathematical expressions or calculations.
+- "weather": queries asking about current weather or forecast.
+- "rag": questions asking about the uploaded documents, PDFs, papers, resumes, portfolio, or candidate's projects/skills.
+- "general": general knowledge, definitions, history, concepts, or general facts (e.g. "what is docker", "tell me about tata group").
+
+User Query: "{query}"
+
+Category (reply with ONLY the category name):
+"""
+    try:
+        from llm.manager import MODELS
+        for name, model in MODELS:
+            try:
+                category = model(prompt).strip().lower().replace('"', '').replace('.', '').strip()
+                if category in {"conversational", "calculator", "weather", "rag", "general"}:
+                    return category
+            except Exception:
+                continue
+    except Exception:
+        pass
+    
+    # Fallback heuristics
+    query_lower = query.lower()
+    if is_math_query(query):
+        return "calculator"
+    if "weather" in query_lower:
+        return "weather"
+    from llm.manager import is_conversational
+    if is_conversational(query):
+        return "conversational"
+    if any(word in query_lower for word in ["resume", "cv", "candidate", "experience", "skills", "education", "projects", "profile", "paper", "author", "ijcrt"]):
+        return "rag"
+        
+    return "general"
+
+
 def route_query(query: str):
     response, trace = route_query_with_trace(query)
     return response
@@ -53,29 +96,40 @@ def route_query_with_trace(query: str):
     }
 
     try:
-        from llm.manager import is_conversational
+        from llm.manager import ask_llm_with_trace
         from rag.retrieve import retrieve
 
-        # 1. Check if conversational query first
-        if is_conversational(query):
+        # 1. Classify intent
+        category = classify_query(query)
+        print(f"DEBUG: Classified query category: '{category}'")
+
+        # 2. Conversational Route
+        if category == "conversational":
             trace["retrieval"] = "N/A"
             trace["tool_used"] = "Conversational"
             response, sub_trace = ask_llm_with_trace(query, context="")
             trace.update(sub_trace)
 
-        # 2. Check if Calculator query
-        elif is_math_query(query):
+        # 3. Calculator Route
+        elif category == "calculator":
             trace["retrieval"] = "N/A"
             trace["tool_used"] = "Calculator"
             response = calculator(query)
 
-        # 3. Check if Weather query
-        elif "weather" in query_lower:
+        # 4. Weather Route
+        elif category == "weather":
             trace["retrieval"] = "N/A"
             trace["tool_used"] = "Weather"
             response = get_weather(query)
 
-        # 4. Otherwise check the Vector DB for relevant context
+        # 5. General LLM Route (No RAG / Vector DB)
+        elif category == "general":
+            trace["retrieval"] = "N/A"
+            trace["tool_used"] = "Direct LLM"
+            response, sub_trace = ask_llm_with_trace(query, context="")
+            trace.update(sub_trace)
+
+        # 6. RAG Route (Vector DB)
         else:
             db_context = retrieve(query)
             if db_context.strip():
@@ -98,7 +152,7 @@ def route_query_with_trace(query: str):
                     response, sub_trace = ask_llm_with_trace(query, context=context_from_web, from_web=True)
                     trace.update(sub_trace)
                 else:
-                    response = "I couldn't find any relevant information in the knowledge base or via web search."
+                    response = "I couldn't find any information."
 
     except Exception as e:
         response = f"An error occurred: {e}"

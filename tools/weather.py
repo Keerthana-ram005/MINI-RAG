@@ -4,12 +4,19 @@ from config import WEATHER_API_KEY
 
 
 def extract_city(query):
-    match = re.search(r"weather\s+(?:in|at)?\s*(.+)", query.lower())
-
+    query_lower = query.lower()
+    # Match city after in, at, for, of
+    match = re.search(r"\b(?:in|at|for|of)\s+([a-zA-Z\s\-]+)", query_lower)
     if match:
-        return match.group(1).strip().title()
-
-    return query.strip().title()
+        city = match.group(1).strip()
+        # Remove trailing indicators
+        city = re.split(r'\s+(?:today|tomorrow|this|next|\?|now)', city)[0]
+        return city.strip().title()
+    
+    # Strip typical prefixes
+    cleaned = re.sub(r'^(what is the|what\'s the|current|weather|temperature|in|at|for|of)\s+', '', query_lower)
+    cleaned = cleaned.strip("? ").strip()
+    return cleaned.title()
 
 
 def get_weather(query):
